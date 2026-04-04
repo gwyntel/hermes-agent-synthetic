@@ -16,6 +16,7 @@ Backend compatibility:
 - Exa: https://exa.ai (search, extract)
 - Firecrawl: https://docs.firecrawl.dev/introduction (search, extract, crawl; direct or derived firecrawl-gateway.<domain> for Nous Subscribers)
 - Parallel: https://docs.parallel.ai (search, extract)
+- Synthetic: https://synthetic.new (search)
 - Tavily: https://tavily.com (search, extract, crawl)
 
 LLM Processing:
@@ -88,13 +89,14 @@ def _get_backend() -> str:
     keys manually without running setup.
     """
     configured = (_load_web_config().get("backend") or "").lower().strip()
-    if configured in ("parallel", "firecrawl", "tavily", "exa"):
+    if configured in ("parallel", "firecrawl", "tavily", "exa", "synthetic"):
         return configured
 
     # Fallback for manual / legacy config — pick the highest-priority
     # available backend. Firecrawl also counts as available when the managed
     # tool gateway is configured for Nous subscribers.
     backend_candidates = (
+        ("synthetic", _has_env("SYNTHETIC_API_KEY")),
         ("firecrawl", _has_env("FIRECRAWL_API_KEY") or _has_env("FIRECRAWL_API_URL") or _is_tool_gateway_ready()),
         ("parallel", _has_env("PARALLEL_API_KEY")),
         ("tavily", _has_env("TAVILY_API_KEY")),
@@ -113,6 +115,8 @@ def _is_backend_available(backend: str) -> bool:
         return _has_env("EXA_API_KEY")
     if backend == "parallel":
         return _has_env("PARALLEL_API_KEY")
+    if backend == "synthetic":
+        return _has_env("SYNTHETIC_API_KEY")
     if backend == "firecrawl":
         return check_firecrawl_api_key()
     if backend == "tavily":
@@ -186,6 +190,7 @@ def _web_requires_env() -> list[str]:
     requires = [
         "EXA_API_KEY",
         "PARALLEL_API_KEY",
+        "SYNTHETIC_API_KEY",
         "TAVILY_API_KEY",
         "FIRECRAWL_API_KEY",
         "FIRECRAWL_API_URL",
@@ -935,6 +940,50 @@ def _exa_extract(urls: List[str]) -> List[Dict[str, Any]]:
     return results
 
 
+
+# ─── Synthetic Search Helper ─────────────────────────────────────────────────
+
+_SYNTHETIC_SEARCH_URL = "https://api.synthetic.new/v2/search"
+
+
+def _synthetic_search(query: str, limit: int = 10) -> dict:
+    """Search using Synthetic API and return results as a dict."""
+    from tools.interrupt import is_interrupted
+    if is_interrupted():
+        return {"error": "Interrupted", "success": False}
+
+    api_key = os.getenv("SYNTHETIC_API_KEY")
+    if not api_key:
+        raise ValueError(
+            "SYNTHETIC_API_KEY environment variable not set. "
+            "Get your API key at https://synthetic.new"
+        )
+
+    logger.info("Synthetic search: '%s' (limit=%d)", query, limit)
+
+    response = httpx.post(
+        _SYNTHETIC_SEARCH_URL,
+        headers={"Authorization": f"Bearer {api_key}"},
+        json={"query": query},
+        timeout=30.0,
+    )
+    response.raise_for_status()
+    data = response.json()
+
+    web_results = []
+    for i, result in enumerate(data.get("results", [])):
+        web_results.append({
+            "url": result.get("url", ""),
+            "title": result.get("title", ""),
+            "description": result.get("text", ""),
+            "position": i + 1,
+        })
+        if len(web_results) >= limit:
+            break
+
+    return {"success": True, "data": {"web": web_results}}
+
+
 # ─── Parallel Search & Extract Helpers ────────────────────────────────────────
 
 def _parallel_search(query: str, limit: int = 5) -> dict:
@@ -1097,6 +1146,15 @@ def web_search_tool(query: str, limit: int = 5) -> str:
             _debug.save()
             return result_json
 
+        if backend == "synthetic":
+            response_data = _synthetic_search(query, limit)
+            debug_call_data["results_count"] = len(response_data.get("data", {}).get("web", []))
+            result_json = json.dumps(response_data, indent=2, ensure_ascii=False)
+            debug_call_data["final_response_size"] = len(result_json)
+            _debug.log_call("web_search_tool", debug_call_data)
+            _debug.save()
+            return result_json
+
         logger.info("Searching the web for: '%s' (limit: %d)", query, limit)
 
         response = _get_firecrawl_client().search(
@@ -1229,6 +1287,13 @@ async def web_extract_tool(
                     "include_images": False,
                 })
                 results = _normalize_tavily_documents(raw, fallback_url=safe_urls[0] if safe_urls else "")
+            elif backend == "synthetic":
+                # Synthetic doesn't support extract
+                results = [
+                    {"url": url, "title": "", "content": "",
+                     "error": "Synthetic backend does not support extraction. Use a different backend."}
+                    for url in safe_urls
+                ]
             else:
                 # ── Firecrawl extraction ──
                 # Determine requested formats for Firecrawl v2

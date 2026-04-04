@@ -245,6 +245,14 @@ TOOL_CATEGORIES = {
                 ],
             },
             {
+                "name": "Synthetic",
+                "tag": "Web search",
+                "web_backend": "synthetic",
+                "env_vars": [
+                    {"key": "SYNTHETIC_API_KEY", "prompt": "Synthetic API key", "url": "https://synthetic.new"},
+                ],
+            },
+            {
                 "name": "Firecrawl Self-Hosted",
                 "tag": "Free - run your own instance",
                 "web_backend": "firecrawl",

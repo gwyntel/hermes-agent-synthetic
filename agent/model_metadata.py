@@ -26,7 +26,7 @@ _PROVIDER_PREFIXES: frozenset[str] = frozenset({
     "openrouter", "nous", "openai-codex", "copilot", "copilot-acp",
     "zai", "kimi-coding", "minimax", "minimax-cn", "anthropic", "deepseek",
     "opencode-zen", "opencode-go", "ai-gateway", "kilocode", "alibaba",
-    "custom", "local",
+    "synthetic", "custom", "local",
     # Common aliases
     "glm", "z-ai", "z.ai", "zhipu", "github", "github-copilot",
     "github-models", "kimi", "moonshot", "claude", "deep-seek",
@@ -126,6 +126,30 @@ DEFAULT_CONTEXT_LENGTHS = {
     "mimo-v2-pro": 1048576,
     "mimo-v2-omni": 1048576,
     "zai-org/GLM-5": 202752,
+    # Synthetic models (from official catalog https://dev.synthetic.new/docs/api/models)
+    # Always-on models (all accessed via Synthetic API)
+    "moonshotai/Kimi-K2.5": 256000,
+    "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4": 256000,
+    "nvidia/Kimi-K2.5-NVFP4": 256000,
+    "MiniMaxAI/MiniMax-M2.5": 187000,
+    "zai-org/GLM-4.7": 198000,
+    "zai-org/GLM-4.7-Flash": 192000,
+    "zai-org/GLM-5": 192000,
+    # Fireworks-hosted
+    "deepseek-ai/DeepSeek-V3.2": 159000,
+    "MiniMaxAI/MiniMax-M2.1": 192000,
+    "moonshotai/Kimi-K2-Instruct-0905": 256000,
+    "moonshotai/Kimi-K2-Thinking": 256000,
+    "openai/gpt-oss-120b": 128000,
+    # Together AI-hosted
+    "deepseek-ai/DeepSeek-R1-0528": 128000,
+    "deepseek-ai/DeepSeek-V3": 128000,
+    "meta-llama/Llama-3.3-70B-Instruct": 128000,
+    "Qwen/Qwen3-235B-A22B-Thinking-2507": 256000,
+    "Qwen/Qwen3-Coder-480B-A35B-Instruct": 256000,
+    "Qwen/Qwen3.5-397B-A17B": 256000,
+    # Embeddings
+    "nomic-ai/nomic-embed-text-v1.5": 8192,
 }
 
 _CONTEXT_LENGTH_KEYS = (

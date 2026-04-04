@@ -55,6 +55,7 @@ logger = logging.getLogger(__name__)
 
 # Default auxiliary models for direct API-key providers (cheap/fast for side tasks)
 _API_KEY_PROVIDER_AUX_MODELS: Dict[str, str] = {
+    "synthetic": "hf:nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4",
     "zai": "glm-4.5-flash",
     "kimi-coding": "kimi-k2-turbo-preview",
     "minimax": "MiniMax-M2.7-highspeed",
@@ -64,6 +65,12 @@ _API_KEY_PROVIDER_AUX_MODELS: Dict[str, str] = {
     "opencode-zen": "gemini-3-flash",
     "opencode-go": "glm-5",
     "kilocode": "google/gemini-3-flash-preview",
+}
+
+# Vision-capable models for multimodal auxiliary tasks
+# These models support image input for vision analysis
+_API_KEY_PROVIDER_VISION_MODELS: Dict[str, str] = {
+    "synthetic": "hf:moonshotai/Kimi-K2.5",
 }
 
 # OpenRouter app attribution headers
@@ -812,6 +819,41 @@ def _try_anthropic() -> Tuple[Optional[Any], Optional[str]]:
     return AnthropicAuxiliaryClient(real_client, model, token, base_url, is_oauth=is_oauth), model
 
 
+def _try_synthetic_vision() -> Tuple[Optional[OpenAI], Optional[str]]:
+    """Try to create a vision-capable client for Synthetic provider.
+    
+    Uses the vision-specific model (Kimi K2.5) which supports multimodal inputs.
+    """
+    try:
+        from hermes_cli.auth import PROVIDER_REGISTRY, resolve_api_key_provider_credentials
+    except ImportError:
+        return None, None
+    
+    pconfig = PROVIDER_REGISTRY.get("synthetic")
+    if pconfig is None or pconfig.auth_type != "api_key":
+        return None, None
+    
+    pool_present, entry = _select_pool_entry("synthetic")
+    if pool_present:
+        api_key = _pool_runtime_api_key(entry)
+        if not api_key:
+            return None, None
+        base_url = _pool_runtime_base_url(entry, pconfig.inference_base_url) or pconfig.inference_base_url
+        model = _API_KEY_PROVIDER_VISION_MODELS.get("synthetic", "hf:moonshotai/Kimi-K2.5")
+        logger.debug("Auxiliary vision client: Synthetic (%s) via pool", model)
+        return OpenAI(api_key=api_key, base_url=base_url), model
+    
+    creds = resolve_api_key_provider_credentials("synthetic")
+    api_key = str(creds.get("api_key", "")).strip()
+    if not api_key:
+        return None, None
+    
+    base_url = str(creds.get("base_url", "")).strip().rstrip("/") or pconfig.inference_base_url
+    model = _API_KEY_PROVIDER_VISION_MODELS.get("synthetic", "hf:moonshotai/Kimi-K2.5")
+    logger.debug("Auxiliary vision client: Synthetic (%s)", model)
+    return OpenAI(api_key=api_key, base_url=base_url), model
+
+
 def _resolve_forced_provider(forced: str) -> Tuple[Optional[OpenAI], Optional[str]]:
     """Resolve a specific forced provider.  Returns (None, None) if creds missing."""
     if forced == "openrouter":
@@ -1162,6 +1204,7 @@ _VISION_AUTO_PROVIDER_ORDER = (
     "nous",
     "openai-codex",
     "anthropic",
+    "synthetic",
     "custom",
 )
 
@@ -1185,6 +1228,8 @@ def _resolve_strict_vision_backend(provider: str) -> Tuple[Optional[Any], Option
         return _try_codex()
     if provider == "anthropic":
         return _try_anthropic()
+    if provider == "synthetic":
+        return _try_synthetic_vision()
     if provider == "custom":
         return _try_custom_endpoint()
     return None, None
