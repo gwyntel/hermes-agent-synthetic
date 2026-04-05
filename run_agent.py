@@ -42,7 +42,8 @@ import uuid
 from typing import List, Dict, Any, Optional
 from openai import OpenAI
 import fire
-from datetime import datetime
+import httpx
+from datetime import datetime, timezone
 from pathlib import Path
 
 from hermes_constants import get_hermes_home
@@ -2104,6 +2105,38 @@ class AIAgent:
         status_code = getattr(error, "status_code", None)
         prefix = f"HTTP {status_code}: " if status_code else ""
         return f"{prefix}{raw[:500]}"
+
+    def _get_synthetic_quota(self) -> Optional[Dict[str, Any]]:
+        """Fetch current quota status from the Synthetic API.
+        
+        Endpoint: GET https://api.synthetic.new/v2/quotas
+        Requires Bearer auth, does not count against limits.
+        """
+        if not self.api_key:
+            return None
+        
+        url = "https://api.synthetic.new/v2/quotas"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Accept": "application/json",
+        }
+        
+        try:
+            # Using httpx directly to avoid any OpenAI wrapper side-effects
+            # and because quota calls must not count against API limits.
+            resp = httpx.get(url, headers=headers, timeout=10.0)
+            if resp.status_code == 200:
+                data = resp.json()
+                sub = data.get("subscription", {})
+                return {
+                    "limit": int(sub.get("limit", 0)),
+                    "requests": int(sub.get("requests", 0)),
+                    "renews_at": sub.get("renewsAt"),
+                }
+            logger.debug("Synthetic quota check returned HTTP %s: %s", resp.status_code, resp.text)
+        except Exception as e:
+            logger.warning("Failed to fetch Synthetic quota: %s", e)
+        return None
 
     def _mask_api_key_for_logs(self, key: Optional[str]) -> Optional[str]:
         if not key:
@@ -7859,6 +7892,31 @@ class AIAgent:
                     # For rate limits, respect the Retry-After header if present
                     _retry_after = None
                     if is_rate_limited:
+                        # Synthetic-specific quota handling: the API does not send Retry-After
+                        # headers, but exposes a dedicated quota endpoint.  When quota is
+                        # exhausted, sleep until the next renewal period.
+                        if self.provider == "synthetic":
+                            quota = self._get_synthetic_quota()
+                            if quota:
+                                limit = quota.get("limit", 0)
+                                requests = quota.get("requests", 0)
+                                renews_at_str = quota.get("renews_at")
+                                # Safe threshold: wait if 1 or 0 requests remain
+                                if (limit - requests) <= 1 and renews_at_str:
+                                    try:
+                                        dt_renews = datetime.fromisoformat(renews_at_str.replace("Z", "+00:00"))
+                                        now = datetime.now(timezone.utc)
+                                        wait_seconds = (dt_renews - now).total_seconds()
+                                        if wait_seconds > 0:
+                                            # Add 2s buffer for clock skew
+                                            _retry_after = int(wait_seconds) + 2
+                                            self._emit_status(
+                                                f"⏳ Synthetic quota exhausted ({requests}/{limit}). "
+                                                f"Waiting until renewal at {renews_at_str} ({_retry_after}s)..."
+                                            )
+                                    except Exception as e:
+                                        logger.debug("Failed to calculate Synthetic renewal wait: %s", e)
+
                         _resp_headers = getattr(getattr(api_error, "response", None), "headers", None)
                         if _resp_headers and hasattr(_resp_headers, "get"):
                             _ra_raw = _resp_headers.get("retry-after") or _resp_headers.get("Retry-After")
