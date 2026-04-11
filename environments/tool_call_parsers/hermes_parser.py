@@ -20,19 +20,19 @@ from environments.tool_call_parsers import ParseResult, ToolCallParser, register
 
 logger = logging.getLogger(__name__)
 
-# Lazy import to avoid circular dependency
-_heal_json = None
+# Lazy import for healing
+_try_heal_json = None
 
 def _get_heal_json():
-    """Lazy loader for heal_json_tool_arguments."""
-    global _heal_json
-    if _heal_json is None:
+    """Lazy loader for JSON healing."""
+    global _try_heal_json
+    if _try_heal_json is None:
         try:
-            from agent.synthetic_healing import heal_json_tool_arguments
-            _heal_json = heal_json_tool_arguments
+            from agent.response_healing import try_heal_json
+            _try_heal_json = try_heal_json
         except ImportError:
-            _heal_json = lambda x: None  # No-op if healing unavailable
-    return _heal_json
+            _try_heal_json = lambda x: None
+    return _try_heal_json
 
 
 
@@ -69,19 +69,19 @@ class HermesToolCallParser(ToolCallParser):
                 try:
                     tc_data = json.loads(raw_json)
                 except json.JSONDecodeError:
-                    # Attempt healing via Synthetic fix-json model
+                    # Attempt healing via response_healing auxiliary model
                     heal_fn = _get_heal_json()
                     healed_json = heal_fn(raw_json)
                     
                     if healed_json:
-                        logger.info(f"Healed malformed JSON tool call")
+                        logger.info("Healed malformed JSON tool call")
                         try:
                             tc_data = json.loads(healed_json)
                         except json.JSONDecodeError:
-                            logger.warning(f"Healing produced invalid JSON, skipping")
+                            logger.warning("Healing produced invalid JSON, skipping")
                             continue
                     else:
-                        logger.warning(f"JSON parse failed, healing unavailable")
+                        logger.debug("JSON parse failed, no healing available")
                         continue
                 
                 if "name" not in tc_data:

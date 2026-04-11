@@ -433,6 +433,14 @@ DEFAULT_CONFIG = {
             "api_key": "",
             "timeout": 30,
         },
+        "response_healing": {
+            "provider": "auto",
+            "model": "",           # e.g., "hf:syntheticlab/diff-apply" for Synthetic LoRAs
+            "base_url": "",        # direct endpoint for local/custom healing backends
+            "api_key": "",         # paired with base_url
+            "timeout": 15,         # healing should be fast
+            "enabled": True,       # toggle healing on/off
+        },
     },
     
     "display": {

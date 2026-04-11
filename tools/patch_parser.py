@@ -37,19 +37,19 @@ from enum import Enum
 
 logger = logging.getLogger(__name__)
 
-# Lazy import to avoid circular dependency
-_heal_diff = None
+# Lazy import for healing
+_try_heal_diff = None
 
 def _get_heal_diff():
-    """Lazy loader for heal_diff_edit."""
-    global _heal_diff
-    if _heal_diff is None:
+    """Lazy loader for diff healing."""
+    global _try_heal_diff
+    if _try_heal_diff is None:
         try:
-            from agent.synthetic_healing import heal_diff_edit
-            _heal_diff = heal_diff_edit
+            from agent.response_healing import try_heal_diff
+            _try_heal_diff = try_heal_diff
         except ImportError:
-            _heal_diff = lambda x: None  # No-op if healing unavailable
-    return _heal_diff
+            _try_heal_diff = lambda x: None
+    return _try_heal_diff
 
 
 
@@ -536,7 +536,7 @@ def _apply_update(op: PatchOperation, file_ops: Any) -> Tuple[bool, str]:
             )
 
             if error and count == 0:
-                # Try healing via Synthetic diff-apply model
+                # Try healing via response_healing auxiliary model
                 heal_fn = _get_heal_diff()
                 healed_edit = heal_fn({
                     "file_path": op.file_path,
