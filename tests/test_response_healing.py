@@ -136,10 +136,24 @@ class TestConvenienceFunctions:
     @patch('agent.response_healing.heal_json')
     def test_try_heal_json_success(self, mock_heal):
         """try_heal_json returns string on success."""
-        mock_heal.return_value = HealingResult(success=True, fixed_data='{"fixed": true}')
+        mock_heal.return_value = HealingResult(success=True, fixed_data='{"fixed": true}', was_healed=True)
 
         result = try_heal_json('{"broken"')
         assert result == '{"fixed": true}'
+
+    @patch('agent.response_healing.HERMES_HEALING_ENABLED', True)
+    @patch('agent.response_healing._call_healing_model')
+    def test_try_heal_json_with_callback(self, mock_call):
+        """try_heal_json calls status_callback when healing succeeds."""
+        mock_call.return_value = {"success": True, "fixed": {"x": 1}}
+        
+        callback_calls = []
+        def callback(msg):
+            callback_calls.append(msg)
+        
+        result = try_heal_json('{"broken"', status_callback=callback)
+        assert result is not None
+        assert callback_calls == ["🔧 Auto-healed malformed JSON tool call"]
 
     @patch('agent.response_healing.HERMES_HEALING_ENABLED', True)
     @patch('agent.response_healing.heal_json')
@@ -163,10 +177,27 @@ class TestConvenienceFunctions:
         mock_heal.return_value = HealingResult(
             success=True,
             fixed_data={"search": "fixed", "replace": "fixed2"},
+            was_healed=True,
         )
 
         result = try_heal_diff({"file_path": "test.py", "search": "broken", "replace": "x"})
         assert result == {"search": "fixed", "replace": "fixed2"}
+
+    @patch('agent.response_healing.HERMES_HEALING_ENABLED', True)
+    @patch('agent.response_healing._call_healing_model')
+    def test_try_heal_diff_with_callback(self, mock_call):
+        """try_heal_diff calls status_callback when healing succeeds."""
+        mock_call.return_value = {
+            "edit": {"search": "fixed", "replace": "fixed2"}
+        }
+        
+        callback_calls = []
+        def callback(msg):
+            callback_calls.append(msg)
+        
+        result = try_heal_diff({"file_path": "test.py", "search": "broken", "replace": "x"}, status_callback=callback)
+        assert result == {"search": "fixed", "replace": "fixed2"}
+        assert callback_calls == ["🔧 Auto-healed malformed diff edit"]
 
 
 class TestIntegrationScenarios:

@@ -77,6 +77,7 @@ class HealingResult:
     fixed_data: Optional[Any] = None
     error: Optional[str] = None
     model_used: Optional[str] = None
+    was_healed: bool = False  # True if healing was needed and succeeded
 
 
 def _call_healing_model(prompt: str) -> Optional[Dict]:
@@ -113,11 +114,12 @@ def _call_healing_model(prompt: str) -> Optional[Dict]:
         return None
 
 
-def heal_json(broken_args: str) -> HealingResult:
+def heal_json(broken_args: str, status_callback: callable = None) -> HealingResult:
     """Heal malformed JSON tool call arguments.
 
     Args:
         broken_args: The malformed JSON string from tool call arguments
+        status_callback: Optional callback(message) for user notification
 
     Returns:
         HealingResult with fixed JSON string if successful
@@ -128,7 +130,7 @@ def heal_json(broken_args: str) -> HealingResult:
     # Fast path: already valid JSON
     try:
         json.loads(broken_args)
-        return HealingResult(success=True, fixed_data=broken_args)
+        return HealingResult(success=True, fixed_data=broken_args, was_healed=False)
     except json.JSONDecodeError:
         pass  # Need healing
 
@@ -151,19 +153,24 @@ def heal_json(broken_args: str) -> HealingResult:
     try:
         if isinstance(fixed, str):
             json.loads(fixed)  # Validate
-            return HealingResult(success=True, fixed_data=fixed)
+            if status_callback:
+                status_callback("🔧 Auto-healed malformed JSON tool call")
+            return HealingResult(success=True, fixed_data=fixed, was_healed=True)
         else:
-            return HealingResult(success=True, fixed_data=json.dumps(fixed))
+            if status_callback:
+                status_callback("🔧 Auto-healed malformed JSON tool call")
+            return HealingResult(success=True, fixed_data=json.dumps(fixed), was_healed=True)
     except (json.JSONDecodeError, TypeError) as e:
         return HealingResult(success=False, error=f"Fixed data not valid JSON: {e}")
 
 
-def heal_diff(edit_info: Union[Dict, tuple]) -> HealingResult:
+def heal_diff(edit_info: Union[Dict, tuple], status_callback: callable = None) -> HealingResult:
     """Heal a failing search-replace diff edit.
 
     Args:
         edit_info: Dict with keys (file_path, search, replace, file_content)
                    or tuple (file_path, search, replace[, file_content])
+        status_callback: Optional callback(message) for user notification
 
     Returns:
         HealingResult with fixed edit dict if successful
@@ -217,38 +224,50 @@ def heal_diff(edit_info: Union[Dict, tuple]) -> HealingResult:
     if not fixed_search:
         return HealingResult(success=False, error="No fixed search in response")
 
+    if status_callback:
+        status_callback("🔧 Auto-healed malformed diff edit")
+
     return HealingResult(
         success=True,
         fixed_data={"search": fixed_search, "replace": fixed_replace or replace},
+        was_healed=True,
     )
 
 
 # Convenience functions for integration points
-def try_heal_json(broken_args: str) -> Optional[str]:
+def try_heal_json(broken_args: str, status_callback: callable = None) -> Optional[str]:
     """Try to heal JSON, return fixed string or None.
 
     This is the main entry point for JSON healing in parsers.
+    
+    Args:
+        broken_args: Malformed JSON string
+        status_callback: Optional callback for user notification
     """
     if not HERMES_HEALING_ENABLED:
         return None
     
-    result = heal_json(broken_args)
-    if result.success:
+    result = heal_json(broken_args, status_callback=status_callback)
+    if result.success and result.was_healed:
         logger.info("Healed malformed JSON")
         return result.fixed_data
     return None
 
 
-def try_heal_diff(edit_info: Union[Dict, tuple]) -> Optional[Dict]:
+def try_heal_diff(edit_info: Union[Dict, tuple], status_callback: callable = None) -> Optional[Dict]:
     """Try to heal diff edit, return fixed dict or None.
 
     This is the main entry point for diff healing in patch_parser.
+    
+    Args:
+        edit_info: Edit information (dict or tuple)
+        status_callback: Optional callback for user notification
     """
     if not HERMES_HEALING_ENABLED:
         return None
     
-    result = heal_diff(edit_info)
-    if result.success:
+    result = heal_diff(edit_info, status_callback=status_callback)
+    if result.success and result.was_healed:
         logger.info("Healed malformed diff edit")
         return result.fixed_data
     return None
