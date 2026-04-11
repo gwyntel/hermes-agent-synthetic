@@ -29,10 +29,28 @@ Usage:
 """
 
 import difflib
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple, Any
 from enum import Enum
+
+logger = logging.getLogger(__name__)
+
+# Lazy import to avoid circular dependency
+_heal_diff = None
+
+def _get_heal_diff():
+    """Lazy loader for heal_diff_edit."""
+    global _heal_diff
+    if _heal_diff is None:
+        try:
+            from agent.synthetic_healing import heal_diff_edit
+            _heal_diff = heal_diff_edit
+        except ImportError:
+            _heal_diff = lambda x: None  # No-op if healing unavailable
+    return _heal_diff
+
 
 
 class OperationType(Enum):
@@ -518,8 +536,28 @@ def _apply_update(op: PatchOperation, file_ops: Any) -> Tuple[bool, str]:
             )
 
             if error and count == 0:
-                # Try with context hint if available
-                if hunk.context_hint:
+                # Try healing via Synthetic diff-apply model
+                heal_fn = _get_heal_diff()
+                healed_edit = heal_fn({
+                    "file_path": op.file_path,
+                    "search": search_pattern,
+                    "replace": replacement,
+                    "context_hint": hunk.context_hint,
+                    "file_content": new_content,
+                })
+                
+                if healed_edit:
+                    logger.info(f"Healed malformed diff edit for {op.file_path}")
+                    # Retry with healed search/replace
+                    healed_search = healed_edit.get("search", search_pattern)
+                    healed_replace = healed_edit.get("replace", replacement)
+                    
+                    new_content, count, _strategy, error = fuzzy_find_and_replace(
+                        new_content, healed_search, healed_replace, replace_all=False
+                    )
+                
+                # Try with context hint if healing didn't work or wasn't available
+                if error and count == 0 and hunk.context_hint:
                     # Find the context hint location and search nearby
                     hint_pos = new_content.find(hunk.context_hint)
                     if hint_pos != -1:
